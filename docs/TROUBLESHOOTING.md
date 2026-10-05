@@ -24,8 +24,8 @@
 
 2. **登录步骤：**
    - 浏览器会自动打开 Z-Library
-   - 在浏览器中完成登录
-   - 回到终端，按 ENTER 键
+   - 自动使用已配置凭据登录（优先级: --email/--password > 环境变量 ZLIBRARY_EMAIL/ZLIBRARY_PASSWORD > config.json）
+   - 如未配置凭据或自动登录失败（需要验证码等），在浏览器中手动完成登录，按 ENTER 键
    - 会话已保存！
 
 3. **验证登录状态：**
@@ -352,7 +352,7 @@ Failed to connect to github.com port 443
 
 ### 获取帮助
 
-- **GitHub Issues**: [提交问题](https://github.com/zstmfhy/aiset-zlibrary/issues)
+- **GitHub Issues**: [提交问题](https://github.com/icodebase-cn/aiset-zlibrary/issues)
 - **查看文档**: [README.md](README.md)
 - **检查 SKILL.md**: [SKILL.md](SKILL.md)
 

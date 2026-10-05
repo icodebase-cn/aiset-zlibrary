@@ -54,7 +54,7 @@ description: 自动从 Z-Library 下载书籍（优先 EPUB，备选 PDF），�
 
 如果遇到错误：
 - 尝试重试最多 3 次
-- 如果登录失败，提示用户运行 `python3 ~/.claude/skills/aiset-zlibrary/scripts/login.py`
+- 如果登录失败，提示用户运行 `python3 ~/.claude/skills/aiset-zlibrary/scripts/login.py`（自动使用已配置凭据登录）
 - 如果下载失败，提供故障排查建议
 
 ## ⚠️ 重要限制
@@ -173,12 +173,14 @@ python3 scripts/convert_epub.py <epub文件> [输出.md]
 
 ### 首次使用
 
-第一次使用前，确保用户已完成登录：
+第一次使用前，运行登录脚本（自动登录，失败时回退手动登录）：
 
 ```bash
 cd ~/.claude/skills/aiset-zlibrary
 python3 scripts/login.py
 ```
+
+登录凭据优先级：`--email/--password` 参数 > 环境变量 `ZLIBRARY_EMAIL`/`ZLIBRARY_PASSWORD` > `~/.zlibrary/config.json`。未配置凭据时需在浏览器中手动完成登录。
 
 ### 批量处理
 
@@ -225,7 +227,7 @@ A: Z-Library 页面结构可能变化，使用备用方案手动下载
 
 - [Z-Library 网站](https://zh.zlib.li/)
 - [Playwright 文档](https://playwright.dev/)
-- [项目 GitHub](https://github.com/zstmfhy/aiset-zlibrary)
+- [项目 GitHub](https://github.com/icodebase-cn/aiset-zlibrary)
 
 ---
 

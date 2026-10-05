@@ -11,7 +11,7 @@
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/your-username/aiset-zlibrary.git
+git clone https://github.com/icodebase-cn/aiset-zlibrary.git
 cd aiset-zlibrary
 ```
 
@@ -26,6 +26,28 @@ pip install -r requirements.txt
 ```bash
 playwright install chromium
 ```
+
+### 4. 配置登录凭据（可选）
+
+配置凭据后可自动登录（省去手动操作）。凭据按以下优先级读取：
+
+1. 命令行参数: `--email` / `--password`
+2. 环境变量: `ZLIBRARY_EMAIL` / `ZLIBRARY_PASSWORD`
+3. 配置文件: `~/.zlibrary/config.json`（格式：`{"email": "...", "password": "..."}`）
+
+```bash
+# 环境变量（Linux / macOS）
+export ZLIBRARY_EMAIL="your@email.com"
+export ZLIBRARY_PASSWORD="your-password"
+```
+
+```powershell
+# 环境变量（Windows PowerShell）
+$env:ZLIBRARY_EMAIL = "your@email.com"
+$env:ZLIBRARY_PASSWORD = "your-password"
+```
+
+未配置凭据时，登录脚本会在浏览器中打开页面，手动登录即可。
 
 ## 验证安装
 

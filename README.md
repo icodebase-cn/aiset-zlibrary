@@ -42,7 +42,7 @@
 cd ~/.claude/skills  # Windows: %APPDATA%\Claude\skills
 
 # 2. Clone the repository
-git clone https://github.com/zstmfhy/aiset-zlibrary.git aiset-zlibrary
+git clone https://github.com/icodebase-cn/aiset-zlibrary.git aiset-zlibrary
 
 # 3. Complete initial login
 cd aiset-zlibrary
@@ -72,7 +72,7 @@ Claude will automatically:
 
 ```bash
 # Clone repository
-git clone https://github.com/zstmfhy/aiset-zlibrary.git
+git clone https://github.com/icodebase-cn/aiset-zlibrary.git
 cd aiset-zlibrary
 
 # Install Python dependencies
@@ -90,8 +90,8 @@ python3 scripts/login.py
 
 **Steps:**
 1. Browser will automatically open and visit Z-Library
-2. Complete login in the browser
-3. Return to terminal and press **ENTER**
+2. Automatic login using credentials from `--email/--password`, env vars `ZLIBRARY_EMAIL`/`ZLIBRARY_PASSWORD`, or `~/.zlibrary/config.json`
+3. If no credentials are configured or auto-login fails (e.g. captcha), log in manually in the browser and press **ENTER**
 4. Session saved!
 
 ### 3. Download Books
@@ -167,13 +167,25 @@ aiset-zlibrary/
 
 ## 🔧 Configuration
 
-All configurations are saved in `~/.zlibrary/` directory:
+Configurations are saved in `~/.zlibrary/` directory; credentials can also be provided via environment variables (priority: `--email/--password` > env vars > `config.json`):
 
 ```text
 ~/.zlibrary/
 ├── storage_state.json    # Login session (cookies)
 ├── browser_profile/      # Browser data
-└── config.json          # Account config (backup)
+└── config.json          # Optional login credentials
+```
+
+```bash
+# Environment variables (Linux / macOS)
+export ZLIBRARY_EMAIL="your@email.com"
+export ZLIBRARY_PASSWORD="your-password"
+```
+
+```powershell
+# Environment variables (Windows PowerShell)
+$env:ZLIBRARY_EMAIL = "your@email.com"
+$env:ZLIBRARY_PASSWORD = "your-password"
 ```
 
 ## 🛠️ Dependencies
@@ -262,8 +274,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📮 Contact
 
-- GitHub Issues: [Submit issues](https://github.com/zstmfhy/aiset-zlibrary/issues)
-- Discussions: [GitHub Discussions](https://github.com/zstmfhy/aiset-zlibrary/discussions)
+- GitHub Issues: [Submit issues](https://github.com/icodebase-cn/aiset-zlibrary/issues)
+- Discussions: [GitHub Discussions](https://github.com/icodebase-cn/aiset-zlibrary/discussions)
 
 ---
 

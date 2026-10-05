@@ -42,7 +42,7 @@
 cd ~/.claude/skills  # Windows: %APPDATA%\Claude\skills
 
 # 2. 克隆仓库
-git clone https://github.com/zstmfhy/aiset-zlibrary.git aiset-zlibrary
+git clone https://github.com/icodebase-cn/aiset-zlibrary.git aiset-zlibrary
 
 # 3. 完成首次登录
 cd aiset-zlibrary
@@ -72,7 +72,7 @@ Claude 会自动：
 
 ```bash
 # 克隆仓库
-git clone https://github.com/zstmfhy/aiset-zlibrary.git
+git clone https://github.com/icodebase-cn/aiset-zlibrary.git
 cd aiset-zlibrary
 
 # 安装 Python 依赖
@@ -91,8 +91,8 @@ python3 scripts/login.py
 **操作步骤：**
 
 1. 浏览器会自动打开并访问 Z-Library
-2. 在浏览器中完成登录
-3. 登录成功后，回到终端按 **ENTER**
+2. 使用 `--email/--password` 参数、环境变量 `ZLIBRARY_EMAIL`/`ZLIBRARY_PASSWORD` 或 `~/.zlibrary/config.json` 中的凭据自动登录
+3. 若未配置凭据或自动登录失败（如需要验证码），在浏览器中手动完成登录后按 **ENTER**
 4. 会话状态已保存！
 
 ### 3. 下载书籍
@@ -168,13 +168,25 @@ aiset-zlibrary/
 
 ## 🔧 配置文件
 
-所有配置保存在 `~/.zlibrary/` 目录：
+配置保存在 `~/.zlibrary/` 目录；凭据也可通过环境变量提供（优先级: `--email/--password` 参数 > 环境变量 > `config.json`）：
 
 ```text
 ~/.zlibrary/
 ├── storage_state.json    # 登录会话（cookies）
 ├── browser_profile/      # 浏览器数据
-└── config.json          # 账号配置（备用）
+└── config.json          # 可选登录凭据
+```
+
+```bash
+# 环境变量（Linux / macOS）
+export ZLIBRARY_EMAIL="your@email.com"
+export ZLIBRARY_PASSWORD="your-password"
+```
+
+```powershell
+# 环境变量（Windows PowerShell）
+$env:ZLIBRARY_EMAIL = "your@email.com"
+$env:ZLIBRARY_PASSWORD = "your-password"
 ```
 
 ## 🛠️ 依赖项
@@ -263,8 +275,8 @@ python3 scripts/convert_epub.py "~/Downloads/书名.epub"
 
 ## 📮 联系方式
 
-- GitHub Issues: [提交问题](https://github.com/zstmfhy/aiset-zlibrary/issues)
-- 讨论区: [GitHub Discussions](https://github.com/zstmfhy/aiset-zlibrary/discussions)
+- GitHub Issues: [提交问题](https://github.com/icodebase-cn/aiset-zlibrary/issues)
+- 讨论区: [GitHub Discussions](https://github.com/icodebase-cn/aiset-zlibrary/discussions)
 
 ---
 

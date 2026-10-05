@@ -5,7 +5,7 @@ author: Your Name
 
 commands:
   - name: login
-    description: 登录 Z-Library（仅需一次）
+    description: 登录 Z-Library（自动读取参数/环境变量/配置中的凭据，仅需一次）
     usage: python3 scripts/login.py
 
   - name: download

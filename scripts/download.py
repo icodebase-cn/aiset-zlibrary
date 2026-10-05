@@ -4,6 +4,7 @@ Z-Library 全自动下载工具
 """
 
 import asyncio
+import os
 import sys
 import time
 from pathlib import Path
@@ -25,16 +26,22 @@ class ZLibraryDownloader:
         self.config_file = self.config_dir / "config.json"
 
     def load_credentials(self) -> dict | None:
-        """加载 Z-Library 凭据"""
-        if not self.config_file.exists():
-            return None
+        """加载 Z-Library 凭据（优先级: 环境变量 > config.json）"""
+        config_data = {}
+        if self.config_file.exists():
+            try:
+                import json
+                with open(self.config_file, 'r') as f:
+                    config_data = json.load(f)
+            except Exception:
+                config_data = {}
 
-        try:
-            import json
-            with open(self.config_file, 'r') as f:
-                return json.load(f)
-        except:
-            return None
+        email = os.environ.get("ZLIBRARY_EMAIL") or config_data.get('email')
+        password = os.environ.get("ZLIBRARY_PASSWORD") or config_data.get('password')
+
+        if email and password:
+            return {'email': email, 'password': password}
+        return None
 
     async def login_to_zlibrary(self, page):
         """登录 Z-Library"""

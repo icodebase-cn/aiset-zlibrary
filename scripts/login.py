@@ -2,10 +2,13 @@
 """
 Z-Library Login - 一次性登录，保存会话状态
 
-只需登录一次，会话状态长期保存
+凭据优先级: 命令行参数 > 环境变量 > ~/.zlibrary/config.json
+未配置凭据或自动登录失败时回退到手动登录。
 """
 
-import asyncio
+import argparse
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -16,25 +19,109 @@ except ImportError:
     print("请运行: pip install playwright")
     sys.exit(1)
 
+# 登录凭据环境变量（当用户未通过其他方式提供登录信息时使用）
+ENV_EMAIL = "ZLIBRARY_EMAIL"
+ENV_PASSWORD = "ZLIBRARY_PASSWORD"
 
-def zlibrary_login():
+HOME_URL = "https://zh.zlib.li/"
+
+
+def load_credentials(cli_email=None, cli_password=None):
+    """加载登录凭据（优先级: 命令行参数 > 环境变量 > config.json）
+
+    返回 (email, password)；无任何可用来源时返回 (None, None)。
+    """
+    config_email = config_password = None
+    config_file = Path.home() / ".zlibrary" / "config.json"
+    if config_file.exists():
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            config_email = data.get('email')
+            config_password = data.get('password')
+        except Exception:
+            pass
+
+    email = cli_email or os.environ.get(ENV_EMAIL) or config_email
+    password = cli_password or os.environ.get(ENV_PASSWORD) or config_password
+
+    if email and password:
+        return email, password
+    return None, None
+
+
+def is_logged_in(page):
+    """检测当前页面是否处于已登录状态"""
+    try:
+        if page.query_selector('a[href*="logout"]'):
+            return True
+        return "logout" in page.content().lower()
+    except Exception:
+        return False
+
+
+def try_auto_login(page, email, password):
+    """使用给定凭据自动登录，成功返回 True"""
+    try:
+        # 打开登录对话框
+        modal = page.query_selector('#zlibrary-modal-auth')
+        if not modal:
+            login_button = page.query_selector('a:has-text("Log in"), a:has-text("登录")')
+            if not login_button:
+                print("⚠️  未找到登录按钮")
+                return False
+            login_button.click()
+            page.wait_for_timeout(2000)
+
+        # 填写邮箱
+        email_input = page.wait_for_selector(
+            '#modal-auth input[type="email"], #modal-auth input[name="email"], '
+            'input[type="email"], input[name="email"]',
+            timeout=10000
+        )
+        email_input.fill(email)
+
+        # 填写密码
+        password_input = page.wait_for_selector(
+            '#modal-auth input[type="password"], #modal-auth input[name="password"], '
+            'input[type="password"]',
+            timeout=10000
+        )
+        password_input.fill(password)
+
+        # 提交登录
+        submit_button = page.wait_for_selector(
+            '#modal-auth button[type="submit"], '
+            'button[type="submit"], button:has-text("Log in"), button:has-text("登录")',
+            timeout=10000
+        )
+        submit_button.click()
+
+        page.wait_for_timeout(5000)
+        return is_logged_in(page)
+
+    except Exception as e:
+        print(f"⚠️  自动登录出错: {e}")
+        return False
+
+
+def zlibrary_login(email=None, password=None):
     """Z-Library 登录并保存会话"""
-
     config_dir = Path.home() / ".zlibrary"
     config_dir.mkdir(parents=True, exist_ok=True)
     config_dir.chmod(0o700)
 
     storage_state = config_dir / "storage_state.json"
+    cred_email, cred_password = load_credentials(email, password)
 
     print("="*70)
     print("🔐 Z-Library 登录")
     print("="*70)
     print("")
     print("说明:")
-    print("  1. 浏览器会自动打开并访问 Z-Library")
-    print("  2. 请手动完成登录（如果需要）")
-    print("  3. 登录成功后，回到终端按 ENTER")
-    print("  4. 会话状态将被保存，后续无需再次登录")
+    print("  1. 凭据优先级: --email/--password > 环境变量 > ~/.zlibrary/config.json")
+    print(f"  2. 环境变量: {ENV_EMAIL} / {ENV_PASSWORD}")
+    print("  3. 未配置凭据或自动登录失败时，可在浏览器中手动完成登录")
     print("")
 
     with sync_playwright() as p:
@@ -49,19 +136,35 @@ def zlibrary_login():
 
         try:
             print("📖 访问 Z-Library...")
-            page.goto("https://zh.zlib.li/", wait_until='domcontentloaded', timeout=30000)
+            page.goto(HOME_URL, wait_until='domcontentloaded', timeout=30000)
+            page.wait_for_timeout(3000)
 
-            print("")
-            print("="*70)
-            print("📋 操作步骤:")
-            print("="*70)
-            print("1. 在浏览器中完成登录（如果未登录）")
-            print("2. 等待看到 Z-Library 主页")
-            print("3. 回到终端，按 ENTER 继续")
-            print("="*70)
-            print("")
+            if is_logged_in(page):
+                print("✅ 检测到已登录的会话，无需重新登录")
+            else:
+                logged_in = False
+                if cred_email and cred_password:
+                    print(f"🔐 使用已配置账号自动登录: {cred_email}")
+                    if try_auto_login(page, cred_email, cred_password):
+                        print("✅ 自动登录成功")
+                        logged_in = True
+                    else:
+                        print("")
+                        print("⚠️  自动登录失败（可能需要验证码或账号信息有误）")
+                else:
+                    print("⚠️  未找到登录凭据，需要手动登录")
+                    print("")
+                    print("💡 配置凭据后可自动登录:")
+                    print(f"   - 环境变量: {ENV_EMAIL} / {ENV_PASSWORD}")
+                    print("   - 配置文件: ~/.zlibrary/config.json (email/password)")
+                    print("   - 命令行参数: --email / --password")
 
-            input("✅ 已完成登录？按 ENTER 保存会话... ")
+                if not logged_in:
+                    print("")
+                    print("="*70)
+                    print("📋 请在浏览器中手动完成登录，然后回到终端")
+                    print("="*70)
+                    input("✅ 已完成登录？按 ENTER 保存会话... ")
 
             # 保存会话状态
             browser.storage_state(path=str(storage_state))
@@ -83,7 +186,14 @@ def zlibrary_login():
 
 def main():
     """主函数"""
-    zlibrary_login()
+    parser = argparse.ArgumentParser(
+        description="Z-Library 登录（凭据来自命令行参数 / 环境变量 / config.json）"
+    )
+    parser.add_argument("--email", help=f"登录邮箱（可选，优先于环境变量 {ENV_EMAIL} 和 config.json）")
+    parser.add_argument("--password", help=f"登录密码（可选，优先于环境变量 {ENV_PASSWORD} 和 config.json）")
+    args = parser.parse_args()
+
+    zlibrary_login(args.email, args.password)
 
 
 if __name__ == "__main__":

@@ -20,10 +20,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/aiset-zlibrary.git"
+    "url": "https://github.com/icodebase-cn/aiset-zlibrary.git"
   },
   "bugs": {
-    "url": "https://github.com/your-username/aiset-zlibrary/issues"
+    "url": "https://github.com/icodebase-cn/aiset-zlibrary/issues"
   },
-  "homepage": "https://github.com/your-username/aiset-zlibrary#readme"
+  "homepage": "https://github.com/icodebase-cn/aiset-zlibrary#readme"
 }
