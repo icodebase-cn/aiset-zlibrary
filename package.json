@@ -1,0 +1,29 @@
+{
+  "name": "aiset-zlibrary",
+  "version": "1.0.0",
+  "description": "一键从 Z-Library 自动下载书籍（优先 EPUB），支持 PDF/EPUB",
+  "main": "scripts/download.py",
+  "scripts": {
+    "login": "python3 scripts/login.py",
+    "download": "python3 scripts/download.py",
+    "convert": "python3 scripts/convert_epub.py"
+  },
+  "keywords": [
+    "zlibrary",
+    "downloader",
+    "automation",
+    "books",
+    "pdf",
+    "epub"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/aiset-zlibrary.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/aiset-zlibrary/issues"
+  },
+  "homepage": "https://github.com/your-username/aiset-zlibrary#readme"
+}

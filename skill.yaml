@@ -1,0 +1,34 @@
+name: aiset-zlibrary
+version: 1.0.0
+description: 一键从 Z-Library 自动下载书籍（优先 EPUB），支持 PDF/EPUB
+author: Your Name
+
+commands:
+  - name: login
+    description: 登录 Z-Library（仅需一次）
+    usage: python3 scripts/login.py
+
+  - name: download
+    description: 从 Z-Library 下载书籍
+    usage: python3 scripts/download.py <Z-Library URL>
+    arguments:
+      - name: url
+        description: Z-Library 书籍链接
+        required: true
+
+  - name: convert
+    description: 将 EPUB 转换为 Markdown（可选，大文件自动分块）
+    usage: python3 scripts/convert_epub.py <epub文件> [输出.md]
+
+features:
+  - 一次登录，永久使用
+  - 优先下载 EPUB 原文件
+  - 备选 PDF（保留排版）
+  - 可选 EPUB → Markdown 转换（大文件自动分块）
+  - 全自动化流程
+  - 实时进度显示
+
+dependencies:
+  - python>=3.8
+  - playwright
+  - ebooklib
