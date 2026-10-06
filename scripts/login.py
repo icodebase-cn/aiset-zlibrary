@@ -25,6 +25,18 @@ ENV_PASSWORD = "ZLIBRARY_PASSWORD"
 
 HOME_URL = "https://zh.zlib.li/"
 
+# 手动登录轮询参数
+POLL_INTERVAL = 3        # 轮询间隔（秒）
+POLL_TIMEOUT = 600       # 轮询总超时（秒）；超时后退回手动 ENTER
+
+# 已登录标志选择器（基于【可见元素】，避免 page.content() 里出现 "logout" 字样导致误判）
+LOGGED_IN_SELECTORS = [
+    'a:has-text("Log out")',
+    'a:has-text("退出")',
+    'button:has-text("Log out")',
+    '[data-action="logout"]',
+]
+
 
 def load_credentials(cli_email=None, cli_password=None):
     """加载登录凭据（优先级: 命令行参数 > 环境变量 > config.json）
@@ -51,13 +63,43 @@ def load_credentials(cli_email=None, cli_password=None):
 
 
 def is_logged_in(page):
-    """检测当前页面是否处于已登录状态"""
+    """检测当前页面是否处于已登录状态。
+
+    判据基于【可见元素】（右上角 Log out / 用户菜单），而非 HTML 源码里是否含
+    "logout" 字样——后者在登录页也可能命中 JS/CSS 里的字符串，造成误判为已登录、
+    保存下无效会话。实测未登录页这些选择器全部为 False，不会误报。
+    """
     try:
-        if page.query_selector('a[href*="logout"]'):
-            return True
-        return "logout" in page.content().lower()
+        for sel in LOGGED_IN_SELECTORS:
+            el = page.query_selector(sel)
+            if el and el.is_visible():
+                return True
+        return False
     except Exception:
         return False
+
+
+def wait_for_manual_login(page):
+    """轮询等待用户在浏览器里手动完成登录。
+
+    每 POLL_INTERVAL 秒检测一次右上角退出菜单；命中即自动确认并返回 True。
+    超过 POLL_TIMEOUT 仍未登录，退回手动 ENTER（让用户确认或放弃）。
+    """
+    import time
+    deadline = time.time() + POLL_TIMEOUT
+    while time.time() < deadline:
+        if is_logged_in(page):
+            print("")
+            print("✅ 检测到登录成功（右上角出现 Log out / 用户菜单），自动确认")
+            return True
+        try:
+            page.wait_for_timeout(POLL_INTERVAL * 1000)
+        except Exception:
+            time.sleep(POLL_INTERVAL)
+    print("")
+    print(f"⚠️  轮询 {POLL_TIMEOUT // 60} 分钟仍未检测到登录状态")
+    input("若你已在浏览器中登录，按 ENTER 保存会话；否则 Ctrl+C 放弃... ")
+    return is_logged_in(page)
 
 
 def try_auto_login(page, email, password):
@@ -162,16 +204,34 @@ def zlibrary_login(email=None, password=None):
                 if not logged_in:
                     print("")
                     print("="*70)
-                    print("📋 请在浏览器中手动完成登录，然后回到终端")
+                    print("📋 请在弹出的浏览器窗口中手动完成登录")
+                    print("   （自己输邮箱/密码、过验证码；脚本不接触你的密码）")
+                    print("   登录成功的标志：页面右上角出现 Log out / 用户菜单")
                     print("="*70)
-                    input("✅ 已完成登录？按 ENTER 保存会话... ")
+                    print(f"⏳ 脚本每 {POLL_INTERVAL} 秒自动检测一次登录状态，"
+                          f"检测到即自动确认（最长等待 {POLL_TIMEOUT // 60} 分钟）...")
+                    logged_in = wait_for_manual_login(page)
+
+            # 保存前确认登录状态（避免保存未登录的无效会话）
+            login_confirmed = is_logged_in(page)
+            if not login_confirmed:
+                print("")
+                print("⚠️  未检测到已登录状态（页面右上角应出现 Log out / 用户菜单）")
+                answer = input("仍要保存会话？(y/N): ").strip().lower()
+                if answer != 'y':
+                    print("")
+                    print("❌ 已取消保存。请重新运行本脚本并完成登录后再保存")
+                    return
 
             # 保存会话状态
             browser.storage_state(path=str(storage_state))
             storage_state.chmod(0o600)
 
             print("")
-            print("✅ 会话已保存！")
+            if login_confirmed:
+                print("✅ 会话已保存（登录状态已确认）！")
+            else:
+                print("⚠️  会话已保存，但登录状态未确认")
             print(f"📁 位置: {storage_state}")
             print("")
             print("💡 现在可以运行自动化脚本了：")
