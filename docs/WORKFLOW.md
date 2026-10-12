@@ -1,5 +1,17 @@
 # 工作流程详解
 
+## 下载源路由
+
+`scripts/download.py` 根据输入自动路由下载源：
+
+| 输入特征 | 下载源 | 脚本路径 |
+| --- | --- | --- |
+| URL 含 `ctfile.com` | 电子书宝库（城通网盘直链） | `treasure.download_ctfile` |
+| 关键词（非 URL） | 电子书宝库搜索 → 未收录自动降级 Z-Library 站内搜索 | `keyword_flow`（宝库 `treasure.search_books` → `zlib_search.search_zlibrary`） |
+| http(s) URL（zlib 域名） | Z-Library | `download_from_zlibrary` |
+
+关键词流程说明：宝库优先（免登录）；未收录时打印降级提示后自动调 `zlib_search`（复用登录会话）；`--zlib` 可跳过宝库直接站内搜索；两段结果统一用 `--pick 序号` 选择下载。
+
 ## 完整流程图
 
 ```
@@ -39,11 +51,12 @@
         └───────────────────────────────────────┘
                      ↙              ↘
              新版界面              旧版界面
-         (三点菜单)            (转换按钮)
+       (直接下载按钮)         (转换按钮)
                  ↓                   ↓
     ┌─────────────────┐   ┌──────────────────┐
-    │ 点击三点菜单     │   │ 查找转换按钮      │
-    │ 选择格式         │   │ 点击转换          │
+    │ 点击格式下载按钮  │   │ 查找转换按钮      │
+    │ 文字含格式与大小  │   │ 点击转换          │
+    │ 如 EPUB, 636 KB │   │                  │
     └─────────────────┘   └──────────────────┘
                  ↘                   ↙
                   └─────────┬──────────┘
@@ -61,13 +74,13 @@
                             ↓
         ┌───────────────────────────────────────┐
         │  8. 点击下载链接                      │
-        │     - 使用 JavaScript 点击             │
-        │     - 绕过可见性问题                   │
+        │     - 优先真实鼠标点击                │
+        │     - 失败时回退 JS 点击              │
         └───────────────────────────────────────┘
                             ↓
         ┌───────────────────────────────────────┐
         │  9. 等待下载完成                       │
-        │     - 监听下载事件                    │
+        │     - 监听下载事件（最长 3 分钟）      │
         │     - 保存到 ~/Downloads/             │
         └───────────────────────────────────────┘
                             ↓
@@ -78,6 +91,57 @@
         └───────────────────────────────────────┘
                             ↓
                       ✅ 完成！
+```
+
+## 宝库源流程（电子书宝库 / 城通网盘）
+
+```text
+关键词 或 ctfile 链接
+    ↓
+1. 加载目录（~/.zlibrary/treasure_catalog.json，7 天缓存，
+   远端回退: raw.githubusercontent.com → jsdelivr CDN）
+    ↓
+2. 多关键词 AND 搜索（书名/作者/分类，不区分大小写）
+    ↓
+3. 列出匹配结果，--pick 序号 或 交互选择
+    ↓
+4. 启动 Chromium（headless）打开城通网盘页面
+   （页面为 Vue SPA，必须浏览器渲染）
+    ↓
+5. 点击「普通下载」（链接自带公开访问码，免登录）
+    ↓
+6. 页内 JS 下载任务（免费通道限速约 60KB/s，
+   脚本每 10 秒轮询进度）
+    ↓
+7. 完成后触发 Playwright download 事件
+    ↓
+8. 保存到 ~/Downloads/（zip 压缩包，内含 epub/mobi/azw3）
+    ↓
+✅ 完成！解压后可用 convert_epub.py 转换 epub
+```
+
+## Z-Library 站内搜索降级流程（宝库未收录时自动触发）
+
+```text
+宝库搜索无结果（或 --zlib 指定）
+    ↓
+1. 启动 Chromium（有头，无头会被站点风控 503 拦截）
+   复用 ~/.zlibrary/browser_profile 登录会话，需先运行 login.py
+    ↓
+2. 访问 https://zh.zlib.li/s/<关键词>
+   （挑战页检测: 无标题或正文含 "Try again later" → 提示后返回）
+    ↓
+3. 解析 z-bookcard 自定义元素（含 title/author/year/extension/filesize），
+   过滤已删除（deleted!="0"），列出结果
+    ↓
+4. --pick 序号选择 → 打开书籍页
+    ↓
+5. 点击格式下载按钮 a.dlButton.addDownloadedBook[href^='/dl/']
+   （文字如 "EPUB, 636 KB"，EPUB 优先、PDF 备选）
+    ↓
+6. 等待下载事件（最长 3 分钟）保存到 ~/Downloads/
+    ↓
+✅ 完成！epub 可用 convert_epub.py 转 Markdown
 ```
 
 ## 详细步骤说明
@@ -112,11 +176,13 @@ browser = await p.chromium.launch_persistent_context(
 
 ### 步骤 5-6: 页面类型检测和格式选择
 
-**新版界面（三点菜单）：**
+**新版界面（直接下载按钮，书籍页初始即有）：**
 ```python
-dots_button = await page.query_selector('[class*="dots"]')
-if dots_button:
-    # 点击菜单，选择格式
+dl_buttons = await page.query_selector_all(
+    "a.dlButton[href^='/dl/'], a.addDownloadedBook[href^='/dl/']"
+)
+if dl_buttons:
+    # 按钮文字含格式与大小（如 "EPUB, 636 KB"），EPUB 优先、PDF 备选
 ```
 
 **旧版界面（转换按钮）：**
@@ -142,9 +208,12 @@ for i in range(60):
     await asyncio.sleep(1)
 ```
 
-**JavaScript 点击（绕过可见性问题）：**
+**真实点击（优先）与 JS 点击（回退）：**
 ```python
-await download_link.evaluate('el => el.click()')
+try:
+    await download_link.click(timeout=15000)  # 真实鼠标点击
+except Exception:
+    await download_link.evaluate('el => el.click()')  # 部分站点忽略 JS 合成事件
 ```
 
 ### 步骤 9-10: 下载和保存

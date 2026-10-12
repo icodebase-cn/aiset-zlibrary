@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-> Automatically download books from Z-Library with one command.
+> Automatically download books with one command: Z-Library + eBook Treasure Chest (ebook-treasure-chest) dual sources.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
@@ -26,8 +26,10 @@
 
 ## ✨ Features
 
-- 🔐 **One-time Login, Forever Use** - Log in once and reuse the saved session
+- 🔐 **One-time Login, Forever Use** - Log in once and reuse the saved session (Z-Library source)
 - 📥 **Smart Download** - Prioritizes EPUB (original file), auto-fallback to PDF (preserves formatting)
+- 🏮 **eBook Treasure Chest Source** - Integrates the [ebook-treasure-chest](https://github.com/jbiaojerry/ebook-treasure-chest) catalog (24k+ Chinese books) with keyword search and login-free downloads via ctfile
+- 🔎 **In-site Search Fallback** - When the treasure catalog doesn't have the book, automatically falls back to Z-Library in-site search (reuses login session), no manual link hunting needed
 - 🛠️ **Optional Converter** - Standalone EPUB → Markdown script with auto-chunking (>350k words)
 - 🤖 **Fully Automated** - Complete workflow with a single command
 - 🎯 **Format Adaptive** - Automatically detects and processes multiple formats (PDF, EPUB, MOBI, etc.)
@@ -107,14 +109,44 @@ python3 scripts/download.py "https://zh.zlib.li/book/..."
 - ✅ Fallback to PDF (preserves formatting)
 - ✅ Save files to ~/Downloads
 
+> 💡 **The eBook Treasure Chest source requires no login**: just pass a title/author keyword or a ctfile link, see examples below.
+
 ## 📖 Usage Examples
 
 ### Basic Usage
 
 ```bash
-# Download single book
+# Download a single book (Z-Library, login required)
 python3 scripts/download.py "https://zh.zlib.li/book/12345/..."
+
+# Search the eBook Treasure Chest by keyword (login-free, lists matches)
+python3 scripts/download.py "流畅的Python"
+
+# Pick result #1 and download
+python3 scripts/download.py "流畅的Python" --pick 1
+
+# Book not in the treasure catalog? Auto-fallback to Z-Library in-site search (login required)
+python3 scripts/download.py "纳瓦尔宝典" --pick 1
+
+# Skip the treasure catalog and search Z-Library directly
+python3 scripts/download.py "<keyword>" --zlib --pick 1
+
+# Download directly from a ctfile link (login-free)
+python3 scripts/download.py "https://url89.ctfile.com/f/31084289-xxxx-xxxx?p=8866"
 ```
+
+**Treasure source options:**
+
+| Option | Description |
+| --- | --- |
+| `--pick N` | Pick a search result by index (non-interactive) |
+| `--limit N` | Number of search results to show (default 10) |
+| `--zlib` | Skip the treasure catalog, search Z-Library in-site directly (default: treasure first, auto-fallback when not found) |
+| `--refresh` | Force refresh the catalog cache (cached 7 days by default) |
+| `--catalog <path>` | Use a local `all-books.json` file (when GitHub is unreachable) |
+| `--headed` | Run the browser headed (for debugging) |
+
+> ⚠️ Treasure files are zip archives (containing epub/mobi/azw3). The free tier is throttled to ~60KB/s, so large files take a while.
 
 ### Batch Processing
 
@@ -126,6 +158,8 @@ done
 ```
 
 ## 🔄 Workflow
+
+### Z-Library Source
 
 ```text
 Z-Library URL
@@ -144,6 +178,40 @@ Z-Library URL
 5. Return file path ✅
 ```
 
+### eBook Treasure Chest Source
+
+```text
+Keyword or ctfile link
+    ↓
+1. Load catalog (7-day local cache, remote fallback)
+    ↓
+2. Keyword search (title/author/category)
+    ↓
+3. --pick selection (or auto-select when only one match)
+    ↓
+4. Headless browser opens the ctfile page, clicks normal download
+    ↓
+5. In-page download (throttled, progress refreshed every 10s)
+    ↓
+6. Save zip to ~/Downloads (contains epub/mobi/azw3) ✅
+```
+
+### Z-Library In-site Search (auto-fallback when treasure has no match / `--zlib`)
+
+```text
+No treasure match (or --zlib)
+    ↓
+1. Launch headed browser (reuses login session; headless gets blocked)
+    ↓
+2. Visit in-site search page, parse z-bookcard results (deleted filtered)
+    ↓
+3. --pick selection → open book page
+    ↓
+4. Click format download button (e.g. "EPUB, 636 KB", EPUB first)
+    ↓
+5. Download to ~/Downloads ✅
+```
+
 ## 📁 Project Structure
 
 ```text
@@ -157,7 +225,9 @@ aiset-zlibrary/
 ├── requirements.txt      # Python dependencies
 ├── scripts/              # Executable scripts (official standard)
 │   ├── login.py         # Login script
-│   ├── download.py      # Download script
+│   ├── download.py      # Download entry (dual-source auto routing)
+│   ├── treasure.py      # eBook Treasure Chest source
+│   ├── zlib_search.py   # Z-Library in-site search (fallback)
 │   └── convert_epub.py  # EPUB conversion tool
 ├── docs/                 # Documentation
 │   ├── WORKFLOW.md      # Workflow details
@@ -172,7 +242,8 @@ Configurations are saved in `~/.zlibrary/` directory; credentials can also be pr
 ```text
 ~/.zlibrary/
 ├── storage_state.json    # Login session (cookies)
-├── browser_profile/      # Browser data
+├── browser_profile/      # Browser data (reused by in-site search)
+├── treasure_catalog.json # Treasure catalog cache (7-day auto refresh)
 └── config.json          # Optional login credentials
 ```
 
@@ -205,7 +276,16 @@ python3 scripts/login.py
 ### Download
 
 ```bash
+# Z-Library source (login required)
 python3 scripts/download.py <Z-Library URL>
+
+# eBook Treasure Chest source (login-free)
+python3 scripts/download.py "<title/author keyword>" [--pick N]
+python3 scripts/download.py <ctfile link>
+
+# Z-Library in-site search (auto-fallback when treasure has no match; --zlib to skip treasure)
+python3 scripts/download.py "纳瓦尔宝典" --pick 1
+python3 scripts/download.py "<keyword>" --zlib [--pick N]
 ```
 
 ### Convert to Markdown (Optional)

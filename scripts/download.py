@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 """
-Z-Library 全自动下载工具
+多源电子书下载工具
+
+下载源（自动路由）:
+- 电子书宝库: 书名/作者关键词搜索（目录来自 ebook-treasure-chest，免登录），
+  或城通网盘直链（ctfile.com）；未收录时自动降级 Z-Library 站内搜索
+- Z-Library: 传入书籍页 URL（含 zlib 域名）使用已保存会话下载；
+  关键词加 --zlib 可直接走站内搜索（需已登录）
 """
 
+import argparse
 import asyncio
 import os
 import sys
@@ -15,6 +22,16 @@ except ImportError:
     print("❌ Playwright 未安装")
     print("请运行: pip install playwright")
     sys.exit(1)
+
+try:
+    import treasure
+except ImportError:
+    treasure = None  # 宝库源不可用时不影响 Z-Library 流程
+
+try:
+    import zlib_search
+except ImportError:
+    zlib_search = None
 
 
 class ZLibraryDownloader:
@@ -138,6 +155,7 @@ class ZLibraryDownloader:
 
             # 设置下载处理
             download_path = None
+            download_done = asyncio.Event()
 
             async def handle_download(download):
                 nonlocal download_path
@@ -146,6 +164,7 @@ class ZLibraryDownloader:
                 print(f"📄 文件名: {suggested_filename}")
                 download_path = self.downloads_dir / suggested_filename
                 await download.save_as(download_path)
+                download_done.set()
                 print(f"💾 已保存: {download_path}")
 
             page.on('download', handle_download)
@@ -161,38 +180,34 @@ class ZLibraryDownloader:
                 # 步骤1: 查找下载方式（优先 EPUB，然后 PDF）
                 print("🔍 步骤1: 查找下载方式...")
 
-                # 首先检查是否有三个点的菜单按钮（新界面）
-                dots_button = await page.query_selector('button[aria-label="更多选项"], button[title="更多"], .more-options, [class*="dots"], [class*="more"]')
-
                 download_link = None
                 downloaded_format = None
 
-                if dots_button:
-                    print("📱 检测到新版界面（三点菜单）")
-                    # 点击打开菜单
-                    await dots_button.click()
-                    await asyncio.sleep(2)
+                # 新版界面: 书籍页自带格式下载按钮（文字如 "EPUB, 636 KB"，href 为 /dl/ 直链）
+                dl_buttons = await page.query_selector_all(
+                    "a.dlButton[href^='/dl/'], a.addDownloadedBook[href^='/dl/']"
+                )
 
-                    # 查找 EPUB 选项（优先）
-                    print("🔍 查找 EPUB 选项...")
-                    epub_options = await page.query_selector_all('a:has-text("EPUB"), button:has-text("EPUB")')
-                    if epub_options:
-                        # 选择第一个 EPUB
-                        download_link = epub_options[0]
-                        downloaded_format = 'epub'
-                        print(f"✅ 找到 EPUB 选项")
-                    else:
-                        # 备选：查找 PDF
-                        print("🔍 未找到 EPUB，查找 PDF 选项...")
-                        pdf_options = await page.query_selector_all('a:has-text("PDF"), button:has-text("PDF")')
-                        if pdf_options:
-                            download_link = pdf_options[0]
-                            downloaded_format = 'pdf'
-                            print(f"✅ 找到 PDF 选项")
+                if dl_buttons:
+                    print(f"📱 检测到新版界面（{len(dl_buttons)} 个直接下载按钮）")
+                    # 从按钮文字解析格式，EPUB 优先、PDF 备选
+                    for want_fmt in ("epub", "pdf"):
+                        for btn in dl_buttons:
+                            btn_text_lower = (await btn.inner_text()).strip().lower()
+                            if want_fmt in btn_text_lower:
+                                download_link = btn
+                                downloaded_format = want_fmt
+                                break
+                        if download_link:
+                            break
+                    if not download_link:
+                        download_link = dl_buttons[0]
+                    chosen_text = (await download_link.inner_text()).strip()
+                    print(f"✅ 选择下载按钮: {chosen_text or '(未知格式)'}")
 
                 else:
-                    # 旧界面：检查转换按钮
-                    print("📱 检测到旧版界面")
+                    # 旧版界面：检查转换按钮
+                    print("📱 未检测到直接下载按钮，尝试旧版转换按钮...")
                     convert_selector_epub = 'a[data-convert_to="epub"]'
                     convert_selector_pdf = 'a[data-convert_to="pdf"]'
 
@@ -301,22 +316,30 @@ class ZLibraryDownloader:
                 if not download_link:
                     print("❌ 未找到下载链接")
                     await browser.close()
-                    return None
+                    return None, None
 
-                # 点击下载
+                # 点击下载（优先真实鼠标点击；部分站点忽略 JS 合成事件）
                 print("⬇️  步骤2: 点击下载链接...")
 
                 try:
-                    await download_link.evaluate('el => el.click()')
+                    await download_link.click(timeout=15000)
                     print("✅ 点击成功")
                 except Exception as e:
-                    print(f"❌ 点击失败: {e}")
-                    await browser.close()
-                    return None
+                    print(f"⚠️  真实点击失败，改用 JS 点击: {e}")
+                    try:
+                        await download_link.evaluate('el => el.click()')
+                        print("✅ 点击成功（JS）")
+                    except Exception as e2:
+                        print(f"❌ 点击失败: {e2}")
+                        await browser.close()
+                        return None, None
 
-                # 等待下载
-                print("⏳ 步骤3: 等待下载完成...")
-                await asyncio.sleep(20)
+                # 等待下载完成（下载事件回调里 save_as 完成后置位）
+                print("⏳ 步骤3: 等待下载完成（最长 3 分钟）...")
+                try:
+                    await asyncio.wait_for(download_done.wait(), timeout=180)
+                except asyncio.TimeoutError:
+                    pass
 
                 # 检查结果
                 if download_path and download_path.exists():
@@ -366,19 +389,153 @@ class ZLibraryDownloader:
                 return None, None
 
 
+def route_source(arg: str) -> str:
+    """根据输入判断下载源: treasure（直链）/ zlibrary（URL）/ keyword（关键词）"""
+    if treasure and treasure.is_ctfile_url(arg):
+        return "treasure"
+    if arg.lower().startswith(("http://", "https://")):
+        return "zlibrary"
+    return "keyword"
+
+
+def print_download_success(downloaded_file, file_format):
+    """打印成功结果与后续提示"""
+    print("")
+    print("=" * 70)
+    print("🎉 下载完成！")
+    print("=" * 70)
+    print(f"📖 文件: {downloaded_file}")
+    if file_format:
+        print(f"📄 格式: {file_format.upper()}")
+    print("")
+
+    if file_format == 'epub' or downloaded_file.suffix.lower() == '.epub':
+        print("💡 如需转换为 Markdown（大文件自动分块）:")
+        print(f'   python3 scripts/convert_epub.py "{downloaded_file}"')
+        print("")
+
+
+async def choose(results, pick):
+    """按 --pick / 唯一结果自动 / 交互输入 选择候选，返回 (选中项, 退出码)"""
+    if pick is not None:
+        if 1 <= pick <= len(results):
+            return results[pick - 1], 0
+        print(f"❌ --pick {pick} 超出范围（1-{len(results)}）")
+        return None, 1
+    if len(results) == 1:
+        return results[0], 0
+    print("\n💡 使用 --pick 序号 选择下载")
+    if not sys.stdin.isatty():
+        return None, 0  # 非交互环境（Skill 调用），仅列出结果供上层选择
+    try:
+        idx = input("请输入序号下载（直接回车取消）: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None, 0
+    if not idx:
+        return None, 0
+    try:
+        return results[int(idx) - 1], 0
+    except (ValueError, IndexError):
+        print(f"❌ 无效序号: {idx}")
+        return None, 1
+
+
+async def keyword_flow(args) -> int:
+    """关键词下载流程: 宝库优先 → 未收录自动降级 Z-Library 站内搜索"""
+    query = args.query
+
+    # 1. 宝库搜索（--zlib 跳过）
+    treasure_results = []
+    if args.zlib:
+        print("🔍 已指定 --zlib，直接使用 Z-Library 站内搜索")
+    elif treasure is None:
+        print("⚠️  treasure 模块不可用，改用 Z-Library 站内搜索")
+    else:
+        catalog = treasure.load_catalog(refresh=args.refresh, catalog_path=args.catalog)
+        if catalog:
+            treasure_results = treasure.search_books(catalog, query, limit=args.limit)
+
+    # 2. 宝库命中 → 选择 → 城通网盘下载
+    if treasure_results:
+        print(f"\n🔍 找到与「{query}」匹配的书籍:")
+        for i, b in enumerate(treasure_results, 1):
+            fmt = "/".join(b.get("formats", []))
+            print(f"  [{i}] {b.get('title')} | {b.get('author', '未知')} | {fmt} | {b.get('category', '')}")
+
+        chosen, code = await choose(treasure_results, args.pick)
+        if chosen is None:
+            return code
+        print(f"\n📖 已选择: {chosen.get('title')}")
+        path = await treasure.download_ctfile(chosen["link"], headless=not args.headed)
+        if path and path.suffix.lower() == ".zip":
+            print("\n💡 宝库文件为 zip 压缩包，解压后可得 epub/mobi/azw3。")
+            print('   如需 Markdown，可对解压出的 epub 执行: python3 scripts/convert_epub.py "<epub文件>"')
+        return 0 if path else 1
+
+    # 3. 宝库未命中 → Z-Library 站内搜索
+    if not args.zlib:
+        print(f"ℹ️  宝库未收录「{query}」，自动降级 Z-Library 站内搜索...")
+
+    if zlib_search is None:
+        print("❌ zlib_search 模块缺失，无法站内搜索")
+        return 1
+
+    zlib_results = await zlib_search.search_zlibrary(query, limit=args.limit)
+    if not zlib_results:
+        print("\n💡 也可以提供 Z-Library 书籍页链接重试，或换关键词搜索")
+        return 1
+
+    chosen, code = await choose(zlib_results, args.pick)
+    if chosen is None:
+        return code
+
+    print(f"\n📖 已选择: {chosen['title']}")
+    downloader = ZLibraryDownloader()
+    downloaded_file, file_format = await downloader.download_from_zlibrary(chosen["url"])
+
+    if not downloaded_file or not downloaded_file.exists():
+        print("")
+        print("=" * 70)
+        print("❌ 下载失败")
+        print("=" * 70)
+        return 1
+
+    print_download_success(downloaded_file, file_format)
+    return 0
+
+
 async def main():
     """主函数"""
-    if len(sys.argv) < 2:
-        print("Z-Library 全自动下载工具")
-        print("")
-        print("用法: python3 download.py <Z-Library URL>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="多源电子书下载工具（电子书宝库 / Z-Library）",
+        epilog="示例:\n"
+               '  python3 scripts/download.py "书名关键词"            # 宝库优先，未收录自动降级站内搜索\n'
+               '  python3 scripts/download.py "书名关键词" --zlib     # 直接 Z-Library 站内搜索\n'
+               "  python3 scripts/download.py <Z-Library 书籍页 URL>\n"
+               "  python3 scripts/download.py <城通网盘 ctfile 链接>\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("query", help="关键词 / Z-Library URL / 城通网盘链接")
+    parser.add_argument("--pick", type=int, default=None, help="搜索结果序号（非交互选择）")
+    parser.add_argument("--limit", type=int, default=10, help="搜索结果显示数量（默认 10）")
+    parser.add_argument("--zlib", action="store_true", help="关键词改用 Z-Library 站内搜索（默认宝库优先，未收录自动降级）")
+    parser.add_argument("--refresh", action="store_true", help="强制刷新宝库目录缓存")
+    parser.add_argument("--catalog", default=None, help="手动指定宝库目录 JSON 文件（all-books.json）")
+    parser.add_argument("--headed", action="store_true", help="宝库下载使用有头浏览器（调试用）")
+    args = parser.parse_args()
 
-    url = sys.argv[1]
+    source = route_source(args.query)
+
+    if source == "treasure":
+        sys.exit(await treasure.run_treasure(args.query, headed=args.headed))
+
+    if source == "keyword":
+        sys.exit(await keyword_flow(args))
+
+    # Z-Library URL 流程
     downloader = ZLibraryDownloader()
 
-    # 下载
-    downloaded_file, file_format = await downloader.download_from_zlibrary(url)
+    downloaded_file, file_format = await downloader.download_from_zlibrary(args.query)
 
     if not downloaded_file or not downloaded_file.exists():
         print("")
@@ -387,20 +544,7 @@ async def main():
         print("="*70)
         sys.exit(1)
 
-    print("")
-    print("="*70)
-    print("🎉 下载完成！")
-    print("="*70)
-    print(f"📖 文件: {downloaded_file}")
-    if file_format:
-        print(f"📄 格式: {file_format.upper()}")
-    print("")
-
-    # 如果是 EPUB，提示可选手动转换
-    if file_format == 'epub' or downloaded_file.suffix.lower() == '.epub':
-        print("💡 如需转换为 Markdown（大文件自动分块）:")
-        print(f'   python3 scripts/convert_epub.py "{downloaded_file}"')
-        print("")
+    print_download_success(downloaded_file, file_format)
 
 
 if __name__ == "__main__":

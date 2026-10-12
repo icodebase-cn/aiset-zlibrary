@@ -1,15 +1,21 @@
 ---
 name: aiset-zlibrary
-description: 自动从 Z-Library 下载书籍（优先 EPUB，备选 PDF），保存原始文件，不做自动转换。
+description: 自动下载书籍。支持双源：电子书宝库 ebook-treasure-chest（关键词搜索/城通网盘链接，免登录）与 Z-Library（书籍页链接，优先 EPUB 备选 PDF）；宝库未收录时自动降级 Z-Library 站内搜索。保存原始文件，不做自动转换。
 ---
 
 # aiset-zlibrary Skill
 
-让 Claude 帮你从 Z-Library 自动下载书籍，优先 EPUB、备选 PDF，下载后直接保存原文件。
+让 Claude 帮你自动下载书籍，支持两个下载源：
+
+- **电子书宝库**（[ebook-treasure-chest](https://github.com/jbiaojerry/ebook-treasure-chest)）：2.4万+ 中文书籍目录，书名/作者关键词搜索，城通网盘免登录下载（默认首选）
+- **Z-Library**：书籍页链接下载，优先 EPUB、备选 PDF，需已保存登录会话；宝库未收录时自动降级为 Z-Library 站内搜索（需已登录）
+
+下载后直接保存原文件，不做自动转换。
 
 ## 🎯 核心功能
 
 - 一键下载书籍（优先 EPUB，备选 PDF）
+- 关键词搜索电子书宝库目录（免登录），未收录时自动降级 Z-Library 站内搜索
 - 下载后直接保存原文件（不自动转换）
 - 可选手动转换：EPUB → Markdown（大文件自动分块）
 
@@ -18,12 +24,24 @@ description: 自动从 Z-Library 下载书籍（优先 EPUB，备选 PDF），�
 当用户提到以下需求时，使用此 Skill：
 
 - 用户提供 Z-Library 书籍链接（包含 `zlib.li`、`z-lib.org`、`zh.zlib.li` 等域名）
-- 用户说"帮我下载这本书"
+- 用户提供城通网盘链接（包含 `ctfile.com`）
+- 用户说"帮我下载这本书"（无论有无链接）
 - 用户说"自动下载并读这本书"
 - 用户说"把这个 Z-Library 链接的书籍下载下来"
 - 用户要求从特定 URL 下载书籍
+- 用户只有书名/作者，希望搜索并下载（优先用电子书宝库搜索）
 
 ## 🔧 核心指令
+
+### 源路由规则
+
+| 输入特征 | 下载源 | 是否需要登录 |
+| --- | --- | --- |
+| URL 含 `ctfile.com` | 电子书宝库（直链） | 否 |
+| 非_URL 的关键词 | 电子书宝库（搜索）→ 未收录自动降级 Z-Library 站内搜索 | 宝库否 / 降级是 |
+| URL 含 zlib 域名 | Z-Library | 是（已保存会话） |
+
+### 流程 A: Z-Library 链接（用户提供 Z-Library 链接时）
 
 当用户提供 Z-Library 链接时，按以下流程执行：
 
@@ -57,6 +75,53 @@ description: 自动从 Z-Library 下载书籍（优先 EPUB，备选 PDF），�
 - 如果登录失败，提示用户运行 `python3 ~/.claude/skills/aiset-zlibrary/scripts/login.py`（自动使用已配置凭据登录）
 - 如果下载失败，提供故障排查建议
 
+### 流程 B: 电子书宝库（关键词或城通网盘链接时）
+
+> 🚨 **强制规则：用户只给书名/作者（未给链接）时，必须首先执行宝库搜索**，这是默认且首选路径。禁止跳过宝库直接去寻找其他下载地址。
+
+**Step 1: 搜索目录**（关键词输入时）
+
+```bash
+python3 scripts/download.py "书名关键词"
+```
+
+- 首次运行会自动拉取目录（约 2.4 万本）并缓存到 `~/.zlibrary/treasure_catalog.json`（7 天有效）
+- 输出匹配结果列表：序号、书名、作者、格式（epub/mobi/azw3）、分类
+- 将列表展示给用户，让用户选择序号（或直接 `--pick <序号>`）
+- **搜索无结果时脚本自动降级 Z-Library 站内搜索**（无需人工干预），站内结果同样列出供 `--pick` 选择
+
+**Step 2: 选择并下载**
+
+```bash
+python3 scripts/download.py "书名关键词" --pick <序号>
+```
+
+- 也可直接传城通网盘链接（`ctfile.com`）跳过搜索
+- 免费通道限速（约 60KB/s），大文件需数分钟到数十分钟，向用户说明进度
+- 完成后文件为 zip 压缩包（内含 epub/mobi/azw3），保存到 ~/Downloads
+
+**Step 3: 返回结果**
+
+- ✅ 下载成功确认 + 文件路径
+- 💡 提示：解压 zip 可得 epub/mobi/azw3；如需 Markdown 可用 `python3 scripts/convert_epub.py` 转换解压出的 epub
+
+### 流程 C: Z-Library 站内搜索（宝库降级或 `--zlib` 指定时）
+
+触发条件（脚本自动处理，无需额外命令）：
+- 宝库搜索无结果 → 自动降级站内搜索
+- 用户指定 `--zlib` → 跳过宝库直接站内搜索
+
+```bash
+python3 scripts/download.py "书名关键词"            # 宝库优先，未收录自动降级
+python3 scripts/download.py "书名关键词" --zlib     # 跳过宝库，直接站内搜索
+python3 scripts/download.py "书名关键词" --zlib --pick 1
+```
+
+- 复用 `~/.zlibrary/browser_profile` 登录会话，**需先运行 login.py**
+- 使用有头浏览器（站点对无头访问风控严格，实测 503 拦截）
+- 选定结果后自动打开书籍页下载：新版界面直接点击格式下载按钮（如 "EPUB, 636 KB"），优先 EPUB、备选 PDF
+- 若站内也无结果：告知用户未找到，建议换关键词或提供书籍页链接
+
 ## ⚠️ 重要限制
 
 **仅限合法资源！**
@@ -83,7 +148,8 @@ description: 自动从 Z-Library 下载书籍（优先 EPUB，备选 PDF），�
 ### 配置文件
 
 - `~/.zlibrary/storage_state.json` - 保存的登录会话
-- `~/.zlibrary/browser_profile/` - 浏览器数据
+- `~/.zlibrary/browser_profile/` - 浏览器数据（站内搜索复用）
+- `~/.zlibrary/treasure_catalog.json` - 宝库目录缓存（7 天有效）
 
 ## 📝 使用示例
 
@@ -124,10 +190,15 @@ https://zh.zlib.li/book/25314781/aa05a1/钱的第四维
 用户："帮我下载《认知觉醒》这本书"
 ```
 
-**操作：**
-1. 询问："请问有 Z-Library 的链接吗？"
-2. 如果有链接，执行标准流程
-3. 如果没有链接，提示："请提供 Z-Library 书籍页面链接，我可以帮你自动下载"
+**操作（必须按顺序）：**
+1. 首选电子书宝库搜索（免登录）：
+   ```bash
+   python3 scripts/download.py "认知觉醒"
+   ```
+2. 将匹配列表展示给用户，确认后用 `--pick <序号>` 下载
+3. 如果宝库未收录：脚本自动降级 Z-Library 站内搜索并列出结果，继续 `--pick <序号>` 下载（站内搜索需已登录）
+4. 如果站内也无结果：告知用户未找到，建议换关键词或提供书籍页链接
+5. **不要**自行动手编写搜索/爬虫脚本去其他站点找下载链接——脚本已内置宝库搜索 + 站内搜索降级链，超出此范围的请求必须先与用户确认
 
 ### 如果用户提供其他来源
 
@@ -226,6 +297,7 @@ A: Z-Library 页面结构可能变化，使用备用方案手动下载
 ## 📚 相关资源
 
 - [Z-Library 网站](https://zh.zlib.li/)
+- [电子书宝库 ebook-treasure-chest](https://github.com/jbiaojerry/ebook-treasure-chest)（宝库源书籍目录）
 - [Playwright 文档](https://playwright.dev/)
 - [项目 GitHub](https://github.com/icodebase-cn/aiset-zlibrary)
 
