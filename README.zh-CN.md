@@ -40,15 +40,10 @@
 ### 安装
 
 ```bash
-# 1. 进入 Claude Skills 目录
-cd ~/.claude/skills  # Windows: %APPDATA%\Claude\skills
-
-# 2. 克隆仓库
-git clone https://github.com/icodebase-cn/aiset-zlibrary.git aiset-zlibrary
-
-# 3. 完成首次登录
-cd aiset-zlibrary
-python3 scripts/login.py
+AISet 客户端
+下载地址：https://aiqianji.com/download/
+在聊天界面点击「专家技能」。
+输入：请帮我安装 https://github.com/icodebase-cn/aiset-zlibrary.git
 ```
 
 ### 使用方式
