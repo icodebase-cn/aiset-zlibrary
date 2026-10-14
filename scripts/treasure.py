@@ -3,13 +3,18 @@
 电子书宝库下载源（ebook-treasure-chest）
 
 目录来源: https://github.com/jbiaojerry/ebook-treasure-chest
-- 书籍目录: docs/all-books.json（书名/作者/分类/城通网盘下载链接，epub+mobi+azw3）
+- 书籍目录: data/treasure/all-books.json（项目内置离线快照，24071 本，无需联网）
+- 分类文档: data/treasure/md/*.md（1000 个分类书目，本地直读）
 - 下载托管: 城通网盘（ctfile.com），页面为 SPA，需真实浏览器渲染后点击"普通下载"
 - 免登录: 链接自带公开访问码（p=8866），无需账号
 
 用法:
-  python3 scripts/treasure.py "书名或作者关键词"     # 搜索并下载
+  python3 scripts/treasure.py "书名或作者关键词"     # 搜索并下载（离线目录）
   python3 scripts/treasure.py <ctfile 链接>          # 直接下载
+  python3 scripts/treasure.py --categories           # 列出全部内置分类
+  python3 scripts/treasure.py --categories AI        # 按关键词筛选分类
+  python3 scripts/treasure.py --cat-md AI            # 离线查看某分类的书目文档
+  python3 scripts/treasure.py "关键词" --refresh     # 联网更新目录（回写内置快照）
 """
 
 import asyncio
@@ -45,6 +50,11 @@ DEFAULT_ACCESS_CODE = "8866"
 
 DOWNLOAD_TIMEOUT = 1800  # 免费下载限速，单个文件最长等待 30 分钟
 
+# 项目内置离线数据（ebook-treasure-chest 快照，随仓库分发，无需联网）
+BUILTIN_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "treasure"
+BUILTIN_CATALOG = BUILTIN_DATA_DIR / "all-books.json"
+BUILTIN_MD_DIR = BUILTIN_DATA_DIR / "md"
+
 
 def config_dir() -> Path:
     return Path.home() / ".zlibrary"
@@ -52,6 +62,23 @@ def config_dir() -> Path:
 
 def catalog_cache_file() -> Path:
     return config_dir() / "treasure_catalog.json"
+
+
+def builtin_catalog_file() -> Path | None:
+    """返回项目内置目录文件路径（不存在则 None）"""
+    return BUILTIN_CATALOG if BUILTIN_CATALOG.exists() else None
+
+
+def _read_catalog_json(path: Path) -> list | None:
+    """安全读取目录 JSON，失败返回 None"""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list) and data:
+            return data
+    except Exception:
+        pass
+    return None
 
 
 def _fetch_remote_catalog() -> list | None:
@@ -71,55 +98,74 @@ def _fetch_remote_catalog() -> list | None:
     return None
 
 
+def _save_catalog(data: list) -> None:
+    """把最新目录写回用户缓存与项目内置快照（失败仅告警）"""
+    cache = catalog_cache_file()
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        print(f"💾 目录已缓存: {cache}")
+    except Exception as e:
+        print(f"⚠️  缓存写入失败: {e}")
+    try:
+        BUILTIN_CATALOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(BUILTIN_CATALOG, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        print(f"💾 内置目录已更新: {BUILTIN_CATALOG}")
+    except Exception as e:
+        print(f"⚠️  内置目录更新失败（不影响使用）: {e}")
+
+
 def load_catalog(refresh: bool = False, catalog_path: str | None = None) -> list | None:
     """
-    加载书籍目录（优先本地缓存，TTL 7 天）
+    加载书籍目录（离线优先）
 
-    优先级: --catalog 指定文件 > 本地缓存(未过期) > 远端 > 过期缓存兜底
+    优先级: --catalog 指定文件 > 项目内置快照 > 用户缓存 > 远端 > 兜底
+    - 项目内置快照: data/treasure/all-books.json（随仓库分发，默认离线可用，不联网）
+    - refresh=True: 跳过所有本地文件，强制拉取远端并回写内置快照 + 缓存
     """
     cache = catalog_cache_file()
 
+    # 1) 用户显式指定目录文件
     if catalog_path:
-        try:
-            with open(catalog_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+        data = _read_catalog_json(Path(catalog_path))
+        if data:
             print(f"✅ 使用本地目录文件: {catalog_path}（共 {len(data)} 本）")
             return data
-        except Exception as e:
-            print(f"❌ 读取目录文件失败: {e}")
-            return None
+        print(f"❌ 读取目录文件失败: {catalog_path}")
+        return None
 
-    if not refresh and cache.exists():
-        age = time.time() - cache.stat().st_mtime
-        if age < 7 * 24 * 3600:
-            try:
-                with open(cache, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                print(f"✅ 使用本地缓存目录（共 {len(data)} 本，{int(age / 86400)} 天前更新，--refresh 可刷新）")
+    # 2) 项目内置离线快照（默认走这里，零联网）
+    if not refresh:
+        builtin = builtin_catalog_file()
+        if builtin:
+            data = _read_catalog_json(builtin)
+            if data:
+                print(f"✅ 使用项目内置离线目录（共 {len(data)} 本，--refresh 可联网更新）")
                 return data
-            except Exception:
-                pass  # 缓存损坏，走远端
 
+        # 3) 用户缓存（历史遗留路径，7 天内有效）
+        if cache.exists() and (time.time() - cache.stat().st_mtime) < 7 * 24 * 3600:
+            data = _read_catalog_json(cache)
+            if data:
+                print(f"✅ 使用本地缓存目录（共 {len(data)} 本，--refresh 可刷新）")
+                return data
+
+    # 4) 远端拉取（仅 --refresh 或本地全部缺失时触发）
     data = _fetch_remote_catalog()
     if data:
-        try:
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            with open(cache, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False)
-            print(f"💾 目录已缓存: {cache}")
-        except Exception as e:
-            print(f"⚠️  缓存写入失败: {e}")
+        _save_catalog(data)
         return data
 
-    # 远端失败，回退过期缓存
-    if cache.exists():
-        try:
-            with open(cache, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            print(f"⚠️  远端不可用，回退过期本地缓存（共 {len(data)} 本）")
+    # 5) 远端失败，依次回退到任何可用的本地副本
+    for label, path in (("项目内置离线目录", builtin_catalog_file()), ("过期本地缓存", cache if cache.exists() else None)):
+        if not path:
+            continue
+        data = _read_catalog_json(path)
+        if data:
+            print(f"⚠️  远端不可用，回退{label}（共 {len(data)} 本）")
             return data
-        except Exception:
-            pass
     return None
 
 
@@ -145,6 +191,48 @@ def search_books(catalog: list, query: str, limit: int = 10) -> list:
 def sanitize_filename(name: str) -> str:
     """移除 Windows 文件名非法字符"""
     return re.sub(r'[\\/:*?"<>|]', "_", name).strip()
+
+
+# ─────────────────────────────────────────────────────────────
+# 离线分类 md 文档（data/treasure/md/*.md，共 1000 个分类）
+# ─────────────────────────────────────────────────────────────
+
+def list_categories() -> list:
+    """列出所有内置分类名（去 .md 后缀，排序返回）"""
+    if not BUILTIN_MD_DIR.exists():
+        return []
+    return sorted(p.stem for p in BUILTIN_MD_DIR.glob("*.md"))
+
+
+def find_category_files(name: str) -> list:
+    """按关键词匹配分类文件名：精确优先，其余为模糊命中"""
+    if not BUILTIN_MD_DIR.exists():
+        return []
+    kw = (name or "").strip().lower()
+    if not kw:
+        return []
+    exact = BUILTIN_MD_DIR / f"{name.strip()}.md"
+    hits = [exact] if exact.exists() else []
+    hits += sorted(
+        p for p in BUILTIN_MD_DIR.glob("*.md")
+        if kw in p.stem.lower() and p != exact
+    )
+    return hits
+
+
+def read_category_md(name: str) -> tuple:
+    """
+    读取分类 md 原文（完全离线，不走网络）。
+    返回 (文件名, 内容)；未找到返回 (None, None)。
+    """
+    files = find_category_files(name)
+    if not files:
+        return None, None
+    target = files[0]
+    try:
+        return target.name, target.read_text(encoding="utf-8")
+    except Exception:
+        return None, None
 
 
 async def download_ctfile(
@@ -358,6 +446,51 @@ def treasure_main(argv: list) -> int:
     args = argv[1:]
     refresh = "--refresh" in args
     headed = "--headed" in args
+
+    # ── 离线分类浏览（不联网、不下载）────────────────────
+    if "--categories" in args:
+        cats = list_categories()
+        if not cats:
+            print("❌ 未找到内置分类文档（data/treasure/md/ 为空或缺失）")
+            return 1
+        kw = None
+        if "--categories" in args:
+            i = args.index("--categories")
+            if i + 1 < len(args) and not args[i + 1].startswith("--"):
+                kw = args[i + 1]
+        if kw:
+            cats = [c for c in cats if kw.lower() in c.lower()]
+            print(f"🗂  匹配「{kw}」的分类（{len(cats)} 个）:")
+        else:
+            print(f"🗂  内置分类共 {len(cats)} 个:")
+        for c in cats:
+            print(f"  {c}")
+        if not kw:
+            print("\n💡 用法: python3 scripts/treasure.py --categories <关键词>  筛选分类")
+            print("        python3 scripts/treasure.py --cat-md <分类名>        查看该分类书目")
+        return 0
+
+    if "--cat-md" in args:
+        i = args.index("--cat-md")
+        name = args[i + 1] if i + 1 < len(args) else ""
+        if not name:
+            print("❌ 用法: python3 scripts/treasure.py --cat-md <分类名>")
+            return 1
+        fname, content = read_category_md(name)
+        if not content:
+            hits = [p.stem for p in find_category_files(name)]
+            print(f"❌ 未找到分类「{name}」的本地文档")
+            if hits:
+                print(f"💡 相近分类: {', '.join(hits[:20])}")
+            print("   可先运行: python3 scripts/treasure.py --categories <关键词>")
+            return 1
+        src = BUILTIN_MD_DIR / fname
+        print(f"📄 {src}")
+        print("─" * 70)
+        print(content.rstrip())
+        return 0
+    # ──────────────────────────────────────────────────────
+
     catalog_path = None
     if "--catalog" in args:
         i = args.index("--catalog")

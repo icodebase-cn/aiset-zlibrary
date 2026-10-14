@@ -42,6 +42,9 @@ env/
 !package.json
 !.python-version
 !skill.yaml
+# 电子书宝库离线目录快照（随仓库分发，必须保留）
+!data/treasure/all-books.json
+!data/treasure/parse-stats.json
 
 # Z-Library session data (IMPORTANT!)
 ~/.zlibrary/
